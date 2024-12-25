@@ -161,8 +161,7 @@ const App = () => {
           {/* Local Video */}
           <div
             id="local-video"
-            className={`relative bg-gray-800 rounded-lg overflow-hidden aspect-video ${
-              screenTrack ? "w-1/4" : "col-span-full"
+            className={`relative bg-gray-800 rounded-lg overflow-hidden aspect-video
             }`}
           />
           {/* Remote Users */}
