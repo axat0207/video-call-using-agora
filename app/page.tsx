@@ -103,12 +103,17 @@ const App = () => {
   const toggleScreenShare = async (): Promise<void> => {
     try {
       if (!screenTrack) {
-        const track = await AgoraRTC.createScreenVideoTrack();
-        await client.publish(track);
+        const track = await AgoraRTC.createScreenVideoTrack(
+          {},
+          "auto" // Ensure auto mode is used for screen-sharing quality.
+        );
+        await client.unpublish([localTracks.videoTrack!]);
+        await client.publish([track]);
         setScreenTrack(track);
         track.play("screen-share");
       } else {
-        await client.unpublish(screenTrack);
+        await client.unpublish([screenTrack]);
+        await client.publish([localTracks.videoTrack!]);
         screenTrack.close();
         setScreenTrack(null);
       }
