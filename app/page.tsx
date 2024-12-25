@@ -1,29 +1,30 @@
 "use client";
-import { useState, useEffect, useRef } from "react";
-import AgoraRTC from "agora-rtc-sdk-ng";
-import { Mic, MicOff, Video, VideoOff, Share2, X } from "lucide-react";
-import {
+import { useState, useEffect } from "react";
+import AgoraRTC, {
   IMicrophoneAudioTrack,
   ICameraVideoTrack,
   IAgoraRTCRemoteUser,
   ILocalVideoTrack,
 } from "agora-rtc-sdk-ng";
+import { Mic, MicOff, Video, VideoOff, Share2, X } from "lucide-react";
 
 const client = AgoraRTC.createClient({ mode: "rtc", codec: "vp8" });
 
+interface LocalTracks {
+  audioTrack: IMicrophoneAudioTrack | null;
+  videoTrack: ICameraVideoTrack | null;
+}
+
 const App = () => {
-  const [isInCall, setIsInCall] = useState(false);
-  const [channelName, setChannelName] = useState("");
-  const localTrackRef = useRef<{
-    videoTrack: ICameraVideoTrack | null;
-    audioTrack: IMicrophoneAudioTrack | null;
-  }>({
-    videoTrack: null,
+  const [isInCall, setIsInCall] = useState<boolean>(false);
+  const [channelName, setChannelName] = useState<string>("");
+  const [localTracks, setLocalTracks] = useState<LocalTracks>({
     audioTrack: null,
+    videoTrack: null,
   });
-  const [users, setUsers] = useState<IAgoraRTCRemoteUser[]>([]);
-  const [isVideoOn, setIsVideoOn] = useState(true);
-  const [isAudioOn, setIsAudioOn] = useState(true);
+  const [remoteUsers, setRemoteUsers] = useState<IAgoraRTCRemoteUser[]>([]);
+  const [isVideoOn, setIsVideoOn] = useState<boolean>(true);
+  const [isAudioOn, setIsAudioOn] = useState<boolean>(true);
   const [screenTrack, setScreenTrack] = useState<ILocalVideoTrack | null>(null);
 
   const agoraAppID = process.env.NEXT_PUBLIC_AGORA_APPID;
@@ -32,7 +33,7 @@ const App = () => {
   useEffect(() => {
     if (!isInCall) return;
 
-    const init = async () => {
+    const initCall = async (): Promise<void> => {
       client.on("user-published", handleUserPublished);
       client.on("user-unpublished", handleUserUnpublished);
 
@@ -40,92 +41,69 @@ const App = () => {
         if (!agoraAppID) throw new Error("Agora App ID is required");
         await client.join(agoraAppID, channelName, agoraToken || null);
 
-        const [audioTrack, videoTrack] = await Promise.all([
-          AgoraRTC.createMicrophoneAudioTrack(),
-          AgoraRTC.createCameraVideoTrack(),
-        ]);
+        const audioTrack = await AgoraRTC.createMicrophoneAudioTrack();
+        const videoTrack = await AgoraRTC.createCameraVideoTrack();
 
         await client.publish([audioTrack, videoTrack]);
-        localTrackRef.current = { audioTrack, videoTrack };
+        setLocalTracks({ audioTrack, videoTrack });
 
         videoTrack.play("local-user");
       } catch (error) {
-        console.error("Failed to initialize call:", error);
+        console.error("Call initialization failed:", error);
         setIsInCall(false);
       }
     };
 
-    init();
+    initCall();
 
     return () => {
-      const { audioTrack, videoTrack } = localTrackRef.current;
-      audioTrack?.close();
-      videoTrack?.close();
+      localTracks.audioTrack?.close();
+      localTracks.videoTrack?.close();
       client.removeAllListeners();
-      client.leave().catch(console.error);
+      client.leave();
     };
   }, [isInCall, agoraAppID, agoraToken, channelName]);
 
   const handleUserPublished = async (
     user: IAgoraRTCRemoteUser,
     mediaType: "audio" | "video"
-  ) => {
-    try {
-      await client.subscribe(user, mediaType);
+  ): Promise<void> => {
+    await client.subscribe(user, mediaType);
 
-      if (mediaType === "video") {
-        setUsers((prev) => {
-          if (prev.find((u) => u.uid === user.uid)) {
-            return prev;
-          }
-          return [...prev, user];
-        });
-        user.videoTrack?.play(`user-${user.uid}`);
-      }
-
-      if (mediaType === "audio") {
-        user.audioTrack?.play();
-      }
-    } catch (error) {
-      console.error("Failed to subscribe to user:", error);
+    if (mediaType === "video") {
+      setRemoteUsers((prev) => {
+        if (prev.find((u) => u.uid === user.uid)) return prev;
+        return [...prev, user];
+      });
+      setTimeout(() => user.videoTrack?.play(`user-${user.uid}`), 100);
+    }
+    if (mediaType === "audio") {
+      user.audioTrack?.play();
     }
   };
 
-  const handleUserUnpublished = (user: IAgoraRTCRemoteUser) => {
-    client.unsubscribe(user).catch(console.error);
-    setUsers((prev) => prev.filter((u) => u.uid !== user.uid));
+  const handleUserUnpublished = (user: IAgoraRTCRemoteUser): void => {
+    setRemoteUsers((prev) => prev.filter((u) => u.uid !== user.uid));
   };
 
-  const toggleVideo = async () => {
-    const { videoTrack } = localTrackRef.current;
-    if (videoTrack) {
-      try {
-        await videoTrack.setEnabled(!isVideoOn);
-        setIsVideoOn(!isVideoOn);
-      } catch (error) {
-        console.error("Failed to toggle video:", error);
-      }
+  const toggleVideo = async (): Promise<void> => {
+    if (localTracks.videoTrack) {
+      await localTracks.videoTrack.setEnabled(!isVideoOn);
+      setIsVideoOn(!isVideoOn);
     }
   };
 
-  const toggleAudio = async () => {
-    const { audioTrack } = localTrackRef.current;
-    if (audioTrack) {
-      try {
-        await audioTrack.setEnabled(!isAudioOn);
-        setIsAudioOn(!isAudioOn);
-      } catch (error) {
-        console.error("Failed to toggle audio:", error);
-      }
+  const toggleAudio = async (): Promise<void> => {
+    if (localTracks.audioTrack) {
+      await localTracks.audioTrack.setEnabled(!isAudioOn);
+      setIsAudioOn(!isAudioOn);
     }
   };
 
-  const startScreenShare = async () => {
+  const toggleScreenShare = async (): Promise<void> => {
     try {
       if (!screenTrack) {
-        const track = await AgoraRTC.createScreenVideoTrack({
-          encoderConfig: "1080p",
-        });
+        const track = await AgoraRTC.createScreenVideoTrack();
         await client.publish(track);
         setScreenTrack(track);
         track.play("screen-share");
@@ -135,59 +113,51 @@ const App = () => {
         setScreenTrack(null);
       }
     } catch (error) {
-      console.error("Failed to toggle screen share:", error);
+      console.error("Screen sharing failed:", error);
     }
   };
 
-  const leaveChannel = async () => {
-    try {
-      const { audioTrack, videoTrack } = localTrackRef.current;
-      audioTrack?.close();
-      videoTrack?.close();
-      await client.leave();
-      setIsInCall(false);
-      setUsers([]);
-      localTrackRef.current = { audioTrack: null, videoTrack: null };
-    } catch (error) {
-      console.error("Failed to leave channel:", error);
-    }
+  const leaveCall = async (): Promise<void> => {
+    localTracks.audioTrack?.close();
+    localTracks.videoTrack?.close();
+    screenTrack?.close();
+    await client.leave();
+    setIsInCall(false);
+    setRemoteUsers([]);
+    setLocalTracks({ audioTrack: null, videoTrack: null });
+    setScreenTrack(null);
   };
-
-  const VideoGrid = () => (
-    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 p-4 h-[calc(100vh-100px)]">
-      <div
-        id="local-user"
-        className="relative bg-gray-800 rounded-lg overflow-hidden aspect-video"
-      />
-      {screenTrack && (
-        <div
-          id="screen-share"
-          className="relative bg-gray-800 rounded-lg overflow-hidden aspect-video"
-        />
-      )}
-      {users.map((user) => (
-        <div
-          key={user.uid}
-          id={`user-${user.uid}`}
-          className="relative bg-gray-800 rounded-lg overflow-hidden aspect-video"
-        />
-      ))}
-    </div>
-  );
 
   if (!agoraAppID) {
     return (
-      <div className="p-6 text-red-500 font-semibold">
-        Error: Agora App ID not found
-      </div>
+      <div className="p-6 text-red-500">Error: Agora App ID not found</div>
     );
   }
 
   if (isInCall) {
     return (
       <div className="relative min-h-screen bg-gray-900">
-        <VideoGrid />
-        <div className="absolute bottom-4 left-0 right-0 flex justify-center gap-4 px-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 p-4 h-[calc(100vh-100px)]">
+          <div
+            id="local-user"
+            className="relative bg-gray-800 rounded-lg overflow-hidden aspect-video"
+          />
+          {screenTrack && (
+            <div
+              id="screen-share"
+              className="relative bg-gray-800 rounded-lg overflow-hidden aspect-video"
+            />
+          )}
+          {remoteUsers.map((user) => (
+            <div
+              key={user.uid}
+              id={`user-${user.uid}`}
+              className="relative bg-gray-800 rounded-lg overflow-hidden aspect-video"
+            />
+          ))}
+        </div>
+
+        <div className="absolute bottom-4 left-0 right-0 flex justify-center gap-4">
           <button
             onClick={toggleAudio}
             className={`p-4 rounded-full ${
@@ -200,7 +170,6 @@ const App = () => {
               <MicOff className="text-white" />
             )}
           </button>
-
           <button
             onClick={toggleVideo}
             className={`p-4 rounded-full ${
@@ -213,20 +182,15 @@ const App = () => {
               <VideoOff className="text-white" />
             )}
           </button>
-
           <button
-            onClick={startScreenShare}
+            onClick={toggleScreenShare}
             className={`p-4 rounded-full ${
               screenTrack ? "bg-green-500" : "bg-gray-700"
             }`}
           >
             <Share2 className="text-white" />
           </button>
-
-          <button
-            onClick={leaveChannel}
-            className="p-4 rounded-full bg-red-500"
-          >
+          <button onClick={leaveCall} className="p-4 rounded-full bg-red-500">
             <X className="text-white" />
           </button>
         </div>
