@@ -47,7 +47,7 @@ const App = () => {
         await client.publish([audioTrack, videoTrack]);
         setLocalTracks({ audioTrack, videoTrack });
 
-        videoTrack.play("local-user");
+        videoTrack.play("local-video");
       } catch (error) {
         console.error("Call initialization failed:", error);
         setIsInCall(false);
@@ -59,6 +59,7 @@ const App = () => {
     return () => {
       localTracks.audioTrack?.close();
       localTracks.videoTrack?.close();
+      screenTrack?.close();
       client.removeAllListeners();
       client.leave();
     };
@@ -68,22 +69,32 @@ const App = () => {
     user: IAgoraRTCRemoteUser,
     mediaType: "audio" | "video"
   ): Promise<void> => {
-    await client.subscribe(user, mediaType);
+    try {
+      await client.subscribe(user, mediaType);
 
-    if (mediaType === "video") {
-      setRemoteUsers((prev) => {
-        if (prev.find((u) => u.uid === user.uid)) return prev;
-        return [...prev, user];
-      });
-      setTimeout(() => user.videoTrack?.play(`user-${user.uid}`), 100);
-    }
-    if (mediaType === "audio") {
-      user.audioTrack?.play();
+      if (mediaType === "video") {
+        setRemoteUsers((prev) => {
+          if (prev.find((u) => u.uid === user.uid)) return prev;
+          return [...prev, user];
+        });
+        setTimeout(() => user.videoTrack?.play(`user-${user.uid}`), 100);
+      }
+
+      if (mediaType === "audio") {
+        user.audioTrack?.play();
+      }
+    } catch (error) {
+      console.error("Failed to subscribe to user media:", error);
     }
   };
 
-  const handleUserUnpublished = (user: IAgoraRTCRemoteUser): void => {
-    setRemoteUsers((prev) => prev.filter((u) => u.uid !== user.uid));
+  const handleUserUnpublished = (
+    user: IAgoraRTCRemoteUser,
+    mediaType: "audio" | "video"
+  ): void => {
+    if (mediaType === "video") {
+      setRemoteUsers((prev) => prev.filter((u) => u.uid !== user.uid));
+    }
   };
 
   const toggleVideo = async (): Promise<void> => {
@@ -95,25 +106,27 @@ const App = () => {
 
   const toggleAudio = async (): Promise<void> => {
     if (localTracks.audioTrack) {
-      await localTracks.audioTrack.setEnabled(!isAudioOn);
-      setIsAudioOn(!isAudioOn);
+      try {
+        const newState = !isAudioOn;
+        await localTracks.audioTrack.setEnabled(newState);
+        setIsAudioOn(newState);
+      } catch (error) {
+        console.error("Failed to toggle audio:", error);
+      }
     }
   };
 
   const toggleScreenShare = async (): Promise<void> => {
     try {
       if (!screenTrack) {
-        const track = await AgoraRTC.createScreenVideoTrack(
-          {},
-          "auto" // Ensure auto mode is used for screen-sharing quality.
-        );
-        await client.unpublish([localTracks.videoTrack!]);
-        await client.publish([track]);
+        const track = await AgoraRTC.createScreenVideoTrack();
+        await client.unpublish([localTracks.videoTrack!]); // Unpublish the camera track
+        await client.publish(track);
         setScreenTrack(track);
-        track.play("screen-share");
+        track.play("local-screen-preview"); // Play the screen preview locally
       } else {
-        await client.unpublish([screenTrack]);
-        await client.publish([localTracks.videoTrack!]);
+        await client.unpublish(screenTrack);
+        await client.publish([localTracks.videoTrack!]); // Re-publish the camera track
         screenTrack.close();
         setScreenTrack(null);
       }
@@ -143,16 +156,16 @@ const App = () => {
     return (
       <div className="relative min-h-screen bg-gray-900">
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 p-4 h-[calc(100vh-100px)]">
+          {/* Screen Share */}
+
+          {/* Local Video */}
           <div
-            id="local-user"
-            className="relative bg-gray-800 rounded-lg overflow-hidden aspect-video"
+            id="local-video"
+            className={`relative bg-gray-800 rounded-lg overflow-hidden aspect-video ${
+              screenTrack ? "w-1/4" : "col-span-full"
+            }`}
           />
-          {screenTrack && (
-            <div
-              id="screen-share"
-              className="relative bg-gray-800 rounded-lg overflow-hidden aspect-video"
-            />
-          )}
+          {/* Remote Users */}
           {remoteUsers.map((user) => (
             <div
               key={user.uid}
